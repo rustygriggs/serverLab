@@ -16,7 +16,7 @@ void doit(int fd);
 dictionary_t *read_requesthdrs(rio_t *rp);
 void read_postquery(rio_t *rp, dictionary_t *headers, dictionary_t *d);
 void parse_query(const char *uri, dictionary_t *d);
-void serve_form(int fd, const char *pre_content);
+void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name);
 void clienterror(int fd, char *cause, char *errnum, 
 		 char *shortmsg, char *longmsg);
 static void print_stringdictionary(dictionary_t *d);
@@ -49,6 +49,7 @@ int main(int argc, char **argv)
   Signal(SIGPIPE, SIG_IGN);
 
   while (1) {
+  //TODO: make threads here. Lock global dictionaries.
     clientlen = sizeof(clientaddr);
     connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
     if (connfd >= 0) {
@@ -100,27 +101,48 @@ void doit(int fd)
 		  /* For debugging, print the dictionary */
 		  print_stringdictionary(query);
 		  
-		  char *topic = dictionary_get(query, "topic");
-		  char *name = dictionary_get(query, "name");
-		  
-		  if (NULL == dictionary_get(conversations, topic)) { /*if conversation doesn't exist, add to dictionary*/
-			  dictionary_set(conversations, topic, name);
+		  //check if it's coming from the first entry screen or not
+		  char *entry = dictionary_get(query, "entry");
+		  if (entry != NULL) {
+			  char *topic = dictionary_get(query, "topic");
+			  char *name = dictionary_get(query, "name");
+			  char *chat_header = append_strings("Tinychat - ", topic, NULL);
+			  
+			  printf("line 111\n");
+			  
+			  if (NULL == dictionary_get(conversations, topic)) { /*if conversation doesn't exist, add to dictionary*/
+				  dictionary_set(conversations, topic, "");
+				  //char *temp = 
+				  //dictionary_set(conversations, topic, "TEST");
+			  }
+			  else { /*if it already exists, we need to simply join that conversation...somehow*/
+			  	char *conv = dictionary_get(conversations, topic);
+			  	serve_form(fd, chat_header, conv, name);
+			  }
+			  //For testing
+			  printf("line 119");
+			  void *testStringFromConv = dictionary_get(conversations, topic);
+			  printf("line 121");
+			  void *testString = append_strings(testStringFromConv, "This is a test message");
+
+			  printf("Test message: %s", testString);
+			  
+			  dictionary_set(conversations, topic, testString);
+			  //Print conversations dictionary for debugging
+			  print_stringdictionary(conversations);
+			  
+			  char *conversation = dictionary_get(conversations, topic);
+			  serve_form(fd, chat_header, conversation, name);	
 		  }
-		  //else { /*if it already exists, we need to simply join that conversation...somehow*/
-		  	//TODO: join conversation that already exists.
-		  //}
+		  else {
+		  	
+		  }
 		  
-		  //Print conversations dictionary for debugging
-		  print_stringdictionary(conversations);
-		  
-		  char *chat_header = append_strings("Tinychat - ", topic, NULL);
-		  printf("ddebug statement");
-		  serve_form(fd, chat_header);
       }
       
       /* The start code sends back a text-field form: */
       else {
-      	serve_form(fd, "Welcome to TinyChat");
+      	serve_form(fd, "Welcome to TinyChat", NULL, NULL);
       }
 
       /* Clean up */
@@ -193,23 +215,45 @@ static char *ok_header(size_t len, const char *content_type) {
 /*
  * serve_form - sends a form to a client
  */
-void serve_form(int fd, const char *pre_content)
+void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name)
 {
   size_t len;
   char *body, *header;
   
-  body = append_strings("<html><body>\r\n",
+  //if it's the first screen, serve the join form.
+  if (strcmp(pre_cont_header, "Welcome to TinyChat") == 0) {
+  	body = append_strings("<html><body>\r\n",
                         "<p>",
-                        pre_content,
+                        pre_cont_header,
                         "</p>",
                         "\r\n<form action=\"reply\" method=\"post\"",
                         " enctype=\"application/x-www-form-urlencoded\"",
                         " accept-charset=\"UTF-8\">\r\n",
                         "Name: <input type=\"text\" name=\"name\"><br>\r\n",
                         "Topic: <input type=\"text\" name=\"topic\"><br>\r\n",
+                        "<input type=\"hidden\" name=\"entry\" value=\"yes\">\r\n",
                         "<input type=\"submit\" value=\"Join Conversation\">\r\n",
                         "</form></body></html>\r\n",
                         NULL);
+  	
+  }
+  //else serve the conversation form.
+  else {
+  	body = append_strings("<html><body>\r\n",
+                        "<p>",
+                        pre_cont_header,
+                        "</p>",
+                        "\r\n<form action=\"reply\" method=\"post\"",
+                        " enctype=\"application/x-www-form-urlencoded\"",
+                        " accept-charset=\"UTF-8\">\r\n",
+                        conversation,
+                        name,
+                        ":",
+                        "<input type=\"text\" name=\"message\"><br>\r\n",
+                        "<input type=\"submit\" value=\"Add Message\">\r\n",
+                        "</form></body></html>\r\n",
+                        NULL);
+  }
   
   len = strlen(body);
 
