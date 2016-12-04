@@ -16,7 +16,7 @@ void doit(int fd);
 dictionary_t *read_requesthdrs(rio_t *rp);
 void read_postquery(rio_t *rp, dictionary_t *headers, dictionary_t *d);
 void parse_query(const char *uri, dictionary_t *d);
-void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name);
+void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name, const char *topic);
 void clienterror(int fd, char *cause, char *errnum, 
 		 char *shortmsg, char *longmsg);
 static void print_stringdictionary(dictionary_t *d);
@@ -95,6 +95,8 @@ void doit(int fd)
       /* Parse all query arguments into a dictionary */
       query = make_dictionary(COMPARE_CASE_SENS, free);
       parse_uriquery(uri, query);
+
+      
       if (!strcasecmp(method, "POST")) {
         read_postquery(&rio, headers, query);
 
@@ -102,47 +104,73 @@ void doit(int fd)
 		  print_stringdictionary(query);
 		  
 		  //check if it's coming from the first entry screen or not
-		  char *entry = dictionary_get(query, "entry");
-		  if (entry != NULL) {
-			  char *topic = dictionary_get(query, "topic");
-			  char *name = dictionary_get(query, "name");
-			  char *chat_header = append_strings("Tinychat - ", topic, NULL);
-			  
-			  printf("line 111\n");
-			  
+		  const char *entry = dictionary_get(query, "entry");
+		  const char *name = dictionary_get(query, "name");
+		  const char *topic = dictionary_get(query, "topic");
+		  const char *chat_header = append_strings("Tinychat - ", topic, NULL);
+		  if (entry != NULL) { /* this is the entry screen if entry exists*/
 			  if (NULL == dictionary_get(conversations, topic)) { /*if conversation doesn't exist, add to dictionary*/
-				  dictionary_set(conversations, topic, "");
-				  //char *temp = 
-				  //dictionary_set(conversations, topic, "TEST");
+			  	  char *init = append_strings("", NULL);
+				  dictionary_set(conversations, topic, init);
 			  }
 			  else { /*if it already exists, we need to simply join that conversation...somehow*/
 			  	char *conv = dictionary_get(conversations, topic);
-			  	serve_form(fd, chat_header, conv, name);
+			  	serve_form(fd, chat_header, conv, name, topic);
 			  }
-			  //For testing
-			  printf("line 119");
-			  void *testStringFromConv = dictionary_get(conversations, topic);
-			  printf("line 121");
-			  void *testString = append_strings(testStringFromConv, "This is a test message");
 
-			  printf("Test message: %s", testString);
-			  
-			  dictionary_set(conversations, topic, testString);
 			  //Print conversations dictionary for debugging
 			  print_stringdictionary(conversations);
 			  
-			  char *conversation = dictionary_get(conversations, topic);
-			  serve_form(fd, chat_header, conversation, name);	
+			  const char *conversation = dictionary_get(conversations, topic);
+			  serve_form(fd, chat_header, conversation, name, topic);	
 		  }
 		  else {
-		  	
+		  	const char *new_message = dictionary_get(query, "message");
+		  	const char *conv = dictionary_get(conversations, topic);
+		  	if (strcmp(new_message, "") == 0) {
+		  		serve_form(fd, chat_header, conv, name, topic);
+		  	}
+		  	else {
+			  	const char *new_conv = append_strings(conv, "\r\n", name, ": ", new_message, NULL);
+			  	dictionary_set(conversations, topic, (void *) new_conv);
+			  	serve_form(fd, chat_header, new_conv, name, topic);
+		  	}
 		  }
-		  
+		  print_stringdictionary(conversations);
       }
       
       /* The start code sends back a text-field form: */
-      else {
-      	serve_form(fd, "Welcome to TinyChat", NULL, NULL);
+      else if (!strcasecmp(method, "GET")) {
+		
+      	if (starts_with("/conversation", uri)) {
+      		parse_uriquery(uri, query);
+      		const char *topic = dictionary_get(query, "topic");
+      		const char *conv = dictionary_get(conversations, topic);
+      		if (conv == NULL) {
+      			char *init = append_strings("", NULL);
+      			dictionary_set(conversations, topic, init);
+      		}
+      		else {
+		  		printf(conv);
+		  		serve_form(fd, "", conv, "", topic);
+      		}      		
+      	}
+      	else if (starts_with("/say", uri)) {
+      		parse_uriquery(uri, query);
+      		const char *topic = dictionary_get(query, "topic");
+      		const char *user = dictionary_get(query, "user");
+      		const char *content = dictionary_get(query, "content");
+      		const char *conv = dictionary_get(conversations, topic);
+      		const char *new_conv = append_strings(conv, "\r\n", user, ": ", content, NULL);
+      		dictionary_set(conversations, topic, (void *) new_conv);
+      		serve_form(fd, "", "", "", "");
+      	}
+      	else if (starts_with("/import", uri)) {
+      	
+      	}
+     	else {
+     		serve_form(fd, "Welcome to TinyChat", NULL, NULL, NULL);
+     	}
       }
 
       /* Clean up */
@@ -215,13 +243,16 @@ static char *ok_header(size_t len, const char *content_type) {
 /*
  * serve_form - sends a form to a client
  */
-void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name)
+void serve_form(int fd, const char *pre_cont_header, const char *conversation, const char *name, const char *topic)
 {
   size_t len;
   char *body, *header;
-  
+  //if this is for the automated request
+  if (!strcmp(pre_cont_header, "")) {
+  	body = append_strings(conversation, "\r\n", NULL);
+  }
   //if it's the first screen, serve the join form.
-  if (strcmp(pre_cont_header, "Welcome to TinyChat") == 0) {
+  else if (strcmp(pre_cont_header, "Welcome to TinyChat") == 0) {
   	body = append_strings("<html><body>\r\n",
                         "<p>",
                         pre_cont_header,
@@ -247,8 +278,15 @@ void serve_form(int fd, const char *pre_cont_header, const char *conversation, c
                         " enctype=\"application/x-www-form-urlencoded\"",
                         " accept-charset=\"UTF-8\">\r\n",
                         conversation,
+                        "<br>\r\n",
                         name,
                         ":",
+                        "<input type=\"hidden\" name=\"name\" value=",
+                        name,
+                        ">\r\n",
+                        "<input type=\"hidden\" name=\"topic\" value=",
+                       	topic,
+                        ">\r\n",          
                         "<input type=\"text\" name=\"message\"><br>\r\n",
                         "<input type=\"submit\" value=\"Add Message\">\r\n",
                         "</form></body></html>\r\n",
